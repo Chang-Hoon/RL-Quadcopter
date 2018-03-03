@@ -1,12 +1,12 @@
-"""Takeoff task."""
+"""Hover task."""
 
 import numpy as np
 from gym import spaces
 from geometry_msgs.msg import Vector3, Point, Quaternion, Pose, Twist, Wrench
 from quad_controller_rl.tasks.base_task import BaseTask
 
-class Takeoff(BaseTask):
-    """Simple task where the goal is to lift off the ground and reach a target height."""
+class Hover(BaseTask):
+    """Simple task where the goal is to lift off the ground, reach a target height and hover."""
 
     def __init__(self):
         # State space: <position_x, .._y, .._z, orientation_x, .._y, .._z, .._w>
@@ -27,7 +27,7 @@ class Takeoff(BaseTask):
         # Task-specific parameters
         self.max_duration = 5.0  # secs
         self.target_z = 10.0  # target height (z position) to reach for successful takeoff
-        self.goal = 'Takeoff' 
+        self.goal = 'Hover' 
 
     def reset(self):
         # Nothing to reset; just return initial condition

@@ -5,7 +5,7 @@ import numpy as np
 class Actor:
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, action_low, action_high):
+    def __init__(self, state_size, action_size, action_low, action_high, num_units):
         """Initialize parameters and build model.
 
         Params
@@ -14,6 +14,7 @@ class Actor:
             action_size (int): Dimension of each action
             action_low (array): Min value of each action dimension
             action_high (array): Max value of each action dimension
+            num_units (int): Number of units per layer
         """
         self.state_size = state_size
         self.action_size = action_size
@@ -22,6 +23,7 @@ class Actor:
         self.action_range = self.action_high - self.action_low
 
         # Initialize any other variables here
+        self.num_units = num_units
 
         self.build_model()
 
@@ -31,9 +33,12 @@ class Actor:
         states = layers.Input(shape=(self.state_size,), name='states')
 
         # Add hidden layers
-        net = layers.Dense(units=32, activation='relu')(states)
-        net = layers.Dense(units=64, activation='relu')(net)
-        net = layers.Dense(units=32, activation='relu')(net)
+        # net = layers.Dense(units=32, activation='relu')(states)
+        # net = layers.Dense(units=64, activation='relu')(net)
+        # net = layers.Dense(units=32, activation='relu')(net)
+        net = layers.Dense(units=self.num_units, activation='relu')(states)
+        net = layers.Dense(units=self.num_units, activation='relu')(net)
+        net = layers.Dense(units=self.num_units, activation='relu')(net)
 
         # Try different layer sizes, activations, add batch normalization, regularizers, etc.
 
@@ -66,18 +71,20 @@ class Actor:
 class Critic:
     """Critic (Value) Model."""
 
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, num_units):
         """Initialize parameters and build model.
 
         Params
         ======
             state_size (int): Dimension of each state
             action_size (int): Dimension of each action
+            num_units (int): Number of units per layer
         """
         self.state_size = state_size
         self.action_size = action_size
 
         # Initialize any other variables here
+        self.num_units = num_units
 
         self.build_model()
 
@@ -88,12 +95,16 @@ class Critic:
         actions = layers.Input(shape=(self.action_size,), name='actions')
 
         # Add hidden layer(s) for state pathway
-        net_states = layers.Dense(units=32, activation='relu')(states)
-        net_states = layers.Dense(units=64, activation='relu')(net_states)
+        # net_states = layers.Dense(units=32, activation='relu')(states)
+        # net_states = layers.Dense(units=64, activation='relu')(net_states)
+        net_states = layers.Dense(units=self.num_units, activation='relu')(states)
+        net_states = layers.Dense(units=self.num_units, activation='relu')(net_states)
 
         # Add hidden layer(s) for action pathway
-        net_actions = layers.Dense(units=32, activation='relu')(actions)
-        net_actions = layers.Dense(units=64, activation='relu')(net_actions)
+        # net_actions = layers.Dense(units=32, activation='relu')(actions)
+        # net_actions = layers.Dense(units=64, activation='relu')(net_actions)
+        net_actions = layers.Dense(units=self.num_units, activation='relu')(actions)
+        net_actions = layers.Dense(units=self.num_units, activation='relu')(net_actions)
 
         # Try different layer sizes, activations, add batch normalization, regularizers, etc.
 
@@ -165,24 +176,35 @@ class DDPG(BaseAgent):
     def __init__(self, task):
         # Task (environment) information
         self.task = task  # should contain observation_space and action_space
-        self.state_size = 3 # position only
-        self.action_size = 3 # force only
 
-        # Actor (Policy) Model
-        self.action_low = self.task.action_space.low[0:3]
-        self.action_high = self.task.action_space.high[0:3]
-        # self.action_low = self.task.action_space.low
-        # self.action_high = self.task.action_space.high
+        if self.task.goal == 'Takeoff':
+            self.state_size = 1 # position z only
+            self.action_size = 1 # force z only  
+            # Actor (Policy) Model
+            self.action_low = self.task.action_space.low[2]
+            self.action_high = self.task.action_space.high[2]
+            num_units_per_layer = 8
+        else:
+            self.state_size = 3 # position only
+            self.action_size = 3 # force only
+            # Actor (Policy) Model
+            self.action_low = self.task.action_space.low[0:3]
+            self.action_high = self.task.action_space.high[0:3]
+            num_units_per_layer = 64
+            # self.action_low = self.task.action_space.low
+            # self.action_high = self.task.action_space.high
+
+       
         print("Original spaces: {}, {}\nConstrained spaces: {}, {}".format(
             self.task.observation_space.shape, self.task.action_space.shape,
             self.state_size, self.action_size))
 
-        self.actor_local = Actor(self.state_size, self.action_size, self.action_low, self.action_high)
-        self.actor_target = Actor(self.state_size, self.action_size, self.action_low, self.action_high)
+        self.actor_local = Actor(self.state_size, self.action_size, self.action_low, self.action_high, num_units_per_layer)
+        self.actor_target = Actor(self.state_size, self.action_size, self.action_low, self.action_high, num_units_per_layer)
 
         # Critic (Value) Model
-        self.critic_local = Critic(self.state_size, self.action_size)
-        self.critic_target = Critic(self.state_size, self.action_size)
+        self.critic_local = Critic(self.state_size, self.action_size, num_units_per_layer)
+        self.critic_target = Critic(self.state_size, self.action_size, num_units_per_layer)
 
         # Initialize target model parameters with local model parameters
         self.critic_target.model.set_weights(self.critic_local.model.get_weights())
@@ -198,7 +220,7 @@ class DDPG(BaseAgent):
 
         # Algorithm parameters
         self.gamma = 0.99  # discount factor
-        self.tau = 0.01 #0.001  # for soft update of target parameters
+        self.tau = 0.001 #0.001  # for soft update of target parameters
 
         # Score tracker and learning parameters
         self.best_w = None
@@ -229,12 +251,18 @@ class DDPG(BaseAgent):
 
     def preprocess_state(self, state):
         """Reduce state vector to relevant dimensions."""
-        return state[0:3] # position only
+        if self.task.goal == 'Takeoff':
+            return state[2] # position z only
+        else:
+            return state[0:3] # position only
 
     def postprocess_action(self, action):
         """Return complete action vector."""
         complete_action = np.zeros(self.task.action_space.shape) # shape: (6, )
-        complete_action[0:3] = action # linear force only
+        if self.task.goal == 'Takeoff':
+            complete_action[2] = action # linear force z only
+        else:
+            complete_action[0:3] = action # linear force only
         return complete_action
 
     def step(self, state, reward, done):
@@ -253,7 +281,7 @@ class DDPG(BaseAgent):
         
         # [debug]
         if self.count % 30 == 0:
-            print('step(): z={:2.2f} reward:{:2.2f}, done:{}'.format(state[2], reward, done))
+            print('step(): z={} reward:{:2.2f}, done:{}'.format(state, reward, done))
             print('total_reward:', self.total_reward)
 
         # Learn, if enough samples are available in memory
