@@ -184,7 +184,16 @@ class DDPG(BaseAgent):
             self.action_low = self.task.action_space.low[2]
             self.action_high = self.task.action_space.high[2]
             num_units_per_layer = 8
-        else:
+        elif self.task.goal == 'Hover':
+            # self.state_size = np.prod(self.task.observation_space.shape) + 3 # 3: velocity x, y, z
+            self.state_size = 2 # position_z, velocity_z
+            # self.action_size = 3 #np.prod(self.task.action_space.shape)
+            self.action_size = 1 # force z only
+            # Actor (Policy) Model
+            self.action_low = self.task.action_space.low[2]
+            self.action_high = self.task.action_space.high[2]
+            num_units_per_layer = 8
+        else: # Combination2 case
             self.state_size = 3 # position only
             self.action_size = 3 # force only
             # Actor (Policy) Model
@@ -222,10 +231,6 @@ class DDPG(BaseAgent):
         self.gamma = 0.99  # discount factor
         self.tau = 0.001 #0.001  # for soft update of target parameters
 
-        # Score tracker and learning parameters
-        self.best_w = None
-        self.best_score = -np.inf
-
         # Episode variables
         self.reset_episode_vars()
 
@@ -253,6 +258,8 @@ class DDPG(BaseAgent):
         """Reduce state vector to relevant dimensions."""
         if self.task.goal == 'Takeoff':
             return state[2] # position z only
+        elif self.task.goal == 'Hover':
+            return np.array([state[2], state[9]]) # position_z, velocity_z
         else:
             return state[0:3] # position only
 
@@ -260,6 +267,8 @@ class DDPG(BaseAgent):
         """Return complete action vector."""
         complete_action = np.zeros(self.task.action_space.shape) # shape: (6, )
         if self.task.goal == 'Takeoff':
+            complete_action[2] = action # linear force z only
+        elif self.task.goal == 'Hover':
             complete_action[2] = action # linear force z only
         else:
             complete_action[0:3] = action # linear force only
@@ -281,8 +290,7 @@ class DDPG(BaseAgent):
         
         # [debug]
         if self.count % 30 == 0:
-            print('step(): z={} reward:{:2.2f}, done:{}'.format(state, reward, done))
-            print('total_reward:', self.total_reward)
+            print('step(): state={} reward:{:.2f}, done:{}, total_reward:{:.2f}'.format(state, reward, done, self.total_reward))
 
         # Learn, if enough samples are available in memory
         if len(self.memory) > self.batch_size:
@@ -290,13 +298,16 @@ class DDPG(BaseAgent):
             self.learn(experiences)
 
         if done:
+            # [debug]
+            print('step(): state={} reward:{:.2f}, done:{}, total_reward:{:.2f}'.format(state, reward, done, self.total_reward))
             # Write episode stats
             self.write_stats([self.episode_num, self.total_reward])
             self.episode_num += 1
             self.reset_episode_vars()
-        
+
         self.last_state = state
         self.last_action = action
+
         return self.postprocess_action(action)
 
     def act(self, states):
@@ -304,6 +315,9 @@ class DDPG(BaseAgent):
         states = np.reshape(states, [-1, self.state_size])
         actions = self.actor_local.model.predict(states)
         # print('act():actions={}'.format(actions))
+        # [debug]
+        # if self.count % 30 == 0:
+        #     print('act(): actions:{}'.format(actions))
         return actions + self.noise.sample()  # add some noise for exploration
 
     def learn(self, experiences):

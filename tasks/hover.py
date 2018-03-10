@@ -14,7 +14,7 @@ class Hover(BaseTask):
         self.observation_space = spaces.Box(
             np.array([- cube_size / 2, - cube_size / 2,       0.0, -1.0, -1.0, -1.0, -1.0]),
             np.array([  cube_size / 2,   cube_size / 2, cube_size,  1.0,  1.0,  1.0,  1.0]))
-        print("Takeoff(): observation_space = {}".format(self.observation_space))  # [debug]
+        print("Hover(): observation_space = {}".format(self.observation_space))  # [debug]
 
         # Action space: <force_x, .._y, .._z, torque_x, .._y, .._z>
         max_force = 25.0
@@ -22,18 +22,34 @@ class Hover(BaseTask):
         self.action_space = spaces.Box(
             np.array([-max_force, -max_force, -max_force, -max_torque, -max_torque, -max_torque]),
             np.array([ max_force,  max_force,  max_force,  max_torque,  max_torque,  max_torque]))
-        print("Takeoff(): action_space = {}".format(self.action_space))  # [debug]
+        print("Hover(): action_space = {}".format(self.action_space))  # [debug]
 
         # Task-specific parameters
-        self.max_duration = 5.0  # secs
-        self.target_z = 10.0  # target height (z position) to reach for successful takeoff
+        self.max_duration = 5.0 # secs
+        self.max_error_position = 8.0 # distance units
+        self.target_position = np.array([0.0, 0.0, 10.0])  # target position to hover at
+        self.weight_position = 10 #0.9 #0.5
+        self.target_orientation = np.array([0.0, 0.0, 0.0, 1.0]) # target orientation quaternion (upright)
+        self.weight_orientation = 0.01 #0.3
+        self.target_velocity = np.array([0.0, 0.0, 0.0]) # target velocity (ideally should stay in place)
+        self.weight_velocity = 3
+
         self.goal = 'Hover' 
+        # Episode-specific variables
+        self.last_timestamp = None
+        self.last_position = None
 
     def reset(self):
-        # Nothing to reset; just return initial condition
+        # Episode-specific variables
+        self.last_timestamp = None
+        self.last_position = None
+
+        # return initial condition
+        # p = self.target_position + np.random.normal(0.5, 0.1, size=3) # slight random position around the target
+        p = self.target_position + np.array([0.0, 0.0, np.random.normal(0.5, 0.1)]) # slight random position around the target
         return Pose(
-                position=Point(0.0, 0.0, np.random.normal(0.5, 0.1)),  # drop off from a slight random height
-                orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+                position=Point(*p),  # drop off from a slight random height
+                orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
             ), Twist(
                 linear=Vector3(0.0, 0.0, 0.0),
                 angular=Vector3(0.0, 0.0, 0.0)
@@ -41,18 +57,41 @@ class Hover(BaseTask):
 
     def update(self, timestamp, pose, angular_velocity, linear_acceleration):
         # Prepare state vector (pose only; ignore angular_velocity, linear_acceleration)
-        state = np.array([
-                pose.position.x, pose.position.y, pose.position.z,
-                pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
+        position = np.array([pose.position.x, pose.position.y, pose.position.z])
+        orientation = np.array([pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
+        
+        if self.last_timestamp is None:
+            velocity = np.array([0.0, 0.0, 0.0])
+        else:
+            velocity = (position - self.last_position) / max(timestamp - self.last_timestamp, 1e-03) # prevent divide by zero
+        state = np.concatenate([position, orientation, velocity])
+        self.last_timestamp = timestamp
+        self.last_position = position
+        # state = np.array([
+        #         pose.position.x, pose.position.y, pose.position.z,
+        #         pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w])
 
         # Compute reward / penalty and check if this episode is complete
         done = False
-        reward = -min(abs(self.target_z - pose.position.z), 20.0)  # reward = zero for matching target z, -ve as you go farther, upto -20
-        if pose.position.z >= self.target_z:  # agent has crossed the target height
-            reward += 10.0  # bonus reward
+        error_position = np.linalg.norm(self.target_position - state[0:3]) # Euclidean distance from target position vercotr
+        error_orientation = np.linalg.norm(self.target_orientation - state[3:7]) # Euclidean distance from target orientation quaternion
+        error_velocity = np.linalg.norm(self.target_velocity - state[7:10]) # Euclidean distance from target velocity vecotr
+        # import math
+        # error_position = math.pow(error_position, 3)
+        # error_orientation = math.pow(error_orientation, 3)
+        # error_velocity = math.pow(error_velocity, 3)
+
+        reward = -(self.weight_position * error_position
+                 + self.weight_orientation * error_orientation
+                 + self.weight_velocity * error_velocity)
+
+        if error_position > self.max_error_position:
+            reward -= 50.0 # extra penalty, agent strayed too far
+            print('update(): done - error position({})'.format(state[0:3]))
             done = True
-        elif timestamp > self.max_duration:  # agent has run out of time
-            reward -= 10.0  # extra penalty
+        elif timestamp > self.max_duration:
+            print('update(): done - extra reward')
+            reward += 50.0  # extra reward, agent made it to the end
             done = True
 
         # Take one RL step, passing in current state and reward, and obtain action
